@@ -1,20 +1,22 @@
 #!/usr/bin/env python3
 """Séance: a local Gemma 4 medium for things that died.
 
-  python3 seance.py find code REPO [--skip GLOB ...]   find deleted files, save their evidence
+  python3 seance.py find code REPO [--skip GLOB ...]   deleted files and functions in a git repo
+  python3 seance.py find site DOMAIN [--page TS/URL]   a dead website, from the Wayback Machine
+  python3 seance.py find apps [--days N]               Mac apps not opened in N days
   python3 seance.py list                               every grave found so far
   python3 seance.py tombstone NAME                     Gemma writes the tombstone
   python3 seance.py summon NAME ["question"]           ask the dead (a chat if no question)
   python3 seance.py selftest
 
-Code gathers the facts (dates, commits, authors) and numbers each piece of evidence.
+Code gathers the facts (dates, commits, authors, snapshots) and numbers each piece of evidence.
 Gemma only writes the words, and may only cite evidence that exists. When the
 evidence doesn't say, the answer is "The spirits are silent."
 
 Python standard library only. Gemma 4 runs on this machine through Ollama.
 """
 import argparse, fnmatch, json, os, plistlib, re, subprocess, sys, tempfile, time, urllib.request
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timezone
 from html.parser import HTMLParser
 from pathlib import Path
 
@@ -39,7 +41,10 @@ def ask(messages, schema):
         reply = json.load(r)
     if reply.get("prompt_eval_count", 0) >= NUM_CTX - 64:
         sys.exit("The evidence is too long for Gemma's context window.")
-    return json.loads(reply["message"]["content"])
+    try:
+        return json.loads(reply["message"]["content"])
+    except json.JSONDecodeError:
+        sys.exit("Gemma's reply was not complete JSON (cut off at num_predict?). Try again.")
 
 
 def gemma_up():
@@ -383,7 +388,7 @@ def find_site(domain, pages=(), yearly=4):
     ev.add(f"Checked live on {date.today()}: http://{domain}/ " +
            (f"answers with HTTP {code}, ending at {final}." if code not in ("", "000") else "does not answer."))
     facts = {"first_saved": stamp(rows[0][0]), "last_year": rows[-1][0][:4], "pages": len(texts)}
-    return grave("site", domain, domain, "site",
+    return grave("site", domain, domain, domain,
                  f"the website {domain}, as its pages were saved by the Internet Archive's Wayback Machine", facts,
                  f"saved by the Wayback Machine from {facts['first_saved']} to {facts['last_year']}; "
                  f"{len(texts)} page(s) read", ev)
@@ -490,7 +495,8 @@ def tombstone(g):
         "cites": {"type": "array", "items": {"type": "string", "enum": ids}}}}
     reply = ask([{"role": "system", "content": RULES.format(about=g["about"], evidence=evidence_block(g))},
                  {"role": "user", "content":
-                  "Write its tombstone. cause_of_death: one plain sentence on why it was removed, only as the "
+                  "Write its tombstone. cause_of_death: one plain sentence on why it died (was deleted, shut "
+                  "down or stopped being used), only as the "
                   "evidence tells it (if the evidence gives no reason, say the record does not say why). "
                   "epitaph: one short line in its own voice, under 15 words, poetic but with no new facts."}],
                 schema)
@@ -573,6 +579,8 @@ def selftest():
                      "return 'BOO'", 'still appears 1 time(s)', "keep.py:1:"):
             assert must in texts, must
         assert load("ghost")["path"] == "ghost.py"
+        save(grave("site", "example.org", "example.org", "example.org", "a site", {}, "", []))
+        assert load("example")["kind"] == "site"  # every kind of grave can be summoned by name
 
         # the guard: invented ids are dropped, and no real citation means silence
         assert guard(g, {"answer": "I was deleted [E99].", "silent": False, "cites": ["E99"]}) == (SILENT, [])
