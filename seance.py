@@ -69,11 +69,19 @@ def cited(grave, ids):
     return list(dict.fromkeys(i for i in ids if i in real))
 
 
+def numbers_ok(text, grave, cites):
+    """Every number in TEXT appears in the evidence it cites (04 and 4 count as the same)."""
+    said = {int(n) for n in re.findall(r"\d+", text)}
+    known = {int(n) for e in grave["evidence"] if e["id"] in cites for n in re.findall(r"\d+", e["text"])}
+    return said <= known
+
+
 def guard(grave, reply):
-    """Gemma's summon reply -> (answer, cites). No real evidence cited means silence."""
+    """Gemma's summon reply -> (answer, cites). No real evidence cited, or a number the cited
+    evidence doesn't contain, means silence."""
     cites = cited(grave, reply.get("cites", []))
     answer = re.sub(r"\s*\[[^\]]*\]", "", reply.get("answer", "")).strip()  # ids are shown from `cites`
-    if reply.get("silent") or not cites or not answer:
+    if reply.get("silent") or not cites or not answer or not numbers_ok(answer, grave, cites):
         return SILENT, []
     return answer, cites
 
@@ -511,8 +519,11 @@ def tombstone(g):
                   "epitaph: one short line it would say about itself, under 15 words, in its own voice. Poetic, "
                   "but no new facts, and don't copy a commit message or a page title."}],
                 schema)
-    g["tombstone"] = {"cause_of_death": reply["cause_of_death"].strip(), "epitaph": reply["epitaph"].strip(),
-                      "cites": cited(g, reply["cites"])}
+    cites = cited(g, reply["cites"])
+    cause = reply["cause_of_death"].strip()
+    if not cites or not numbers_ok(cause, g, cites):
+        cause, cites = "The record does not say why.", []
+    g["tombstone"] = {"cause_of_death": cause, "epitaph": reply["epitaph"].strip(), "cites": cites}
     save(g)
     return g["tombstone"]
 
@@ -524,16 +535,24 @@ def summon(g, question, history=()):
         "cites": {"type": "array", "items": {"type": "string", "enum": ids}}}}
     system = RULES.format(about=g["about"], evidence=evidence_block(g)) + (
         "\n\nAnswer as the spirit, in the first person, in one to three short sentences. "
-        "If the evidence does not contain the answer, set silent to true, leave cites empty, and do not guess.")
+        "Answer every part of the question that the evidence covers. Only if the evidence covers none of it, "
+        "set silent to true, leave cites empty, and do not guess.")
     reply = ask([{"role": "system", "content": system}, *history, {"role": "user", "content": question}], schema)
     return guard(g, reply)
+
+
+def receipt(text, answer):
+    """The sentence of a piece of evidence that shares the most words with the answer."""
+    said = set(re.findall(r"\w{4,}", answer.lower()))
+    sentences = [x.strip() for x in re.split(r"(?<=[.!?])\s+|\n", text) if x.strip()]
+    return max(sentences, key=lambda x: len(said & set(re.findall(r"\w{4,}", x.lower()))))
 
 
 def show_answer(g, answer, cites):
     print(f"\n  {answer}" + (f"  [{', '.join(cites)}]" if cites else ""))
     for e in g["evidence"]:
         if e["id"] in cites:
-            print(f"    {e['id']}: {e['text'].splitlines()[0][:150]}")
+            print(f"    {e['id']}: {receipt(e['text'], answer)[:200]}")
 
 
 # ---------- self-test ----------
@@ -597,8 +616,11 @@ def selftest():
         assert guard(g, {"answer": "I was deleted [E99].", "silent": False, "cites": ["E99"]}) == (SILENT, [])
         assert guard(g, {"answer": "I was deleted.", "silent": False, "cites": []}) == (SILENT, [])
         assert guard(g, {"answer": "Who knows.", "silent": True, "cites": ["E1"]}) == (SILENT, [])
+        assert guard(g, {"answer": "I died in 1999.", "silent": False, "cites": ["E3"]}) == (SILENT, [])
         assert guard(g, {"answer": "I died on 4 Oct [E3].", "silent": False, "cites": ["E3", "E99", "E3"]}) \
             == ("I died on 4 Oct.", ["E3"])
+        assert receipt("Saved in 2014. We will shut down on 30 September.\nBye.", "It shut down in September") \
+            == "We will shut down on 30 September."
         # websites: menus and date lists drop out, prose and the title stay
         html = ("<html><head><title>Bye Bye Site</title><script>var x = 1;</script></head><body>"
                 "<ul><li>June 2014 (1)</li></ul><div>Archives June 2014 (1) May 2014 (3) April 2014 (2)</div>"
@@ -673,7 +695,7 @@ def main():
     if a.cmd == "tombstone":
         t = tombstone(g)
         print(describe(g))
-        print(f"\n  Cause of death: {t['cause_of_death']}  [{', '.join(t['cites'])}]")
+        print(f"\n  Cause of death: {t['cause_of_death']}" + (f"  [{', '.join(t['cites'])}]" if t["cites"] else ""))
         print(f"  \"{t['epitaph']}\"")
         return
     if a.question:
