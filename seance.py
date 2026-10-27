@@ -13,13 +13,14 @@ evidence doesn't say, the answer is "The spirits are silent."
 
 Python standard library only. Gemma 4 runs on this machine through Ollama.
 """
-import argparse, fnmatch, json, os, re, subprocess, sys, tempfile, urllib.request
-from datetime import datetime
+import argparse, fnmatch, json, os, plistlib, re, subprocess, sys, tempfile, time, urllib.request
+from datetime import date, datetime, timedelta, timezone
+from html.parser import HTMLParser
 from pathlib import Path
 
 MODEL = os.environ.get("SEANCE_MODEL", "gemma4:e4b")
 OLLAMA = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
-NUM_CTX = 8192  # fixed on every call: changing it makes Ollama reload the model
+NUM_CTX = 4096  # what Ollama's MLX runner loads gemma4:e4b with; fixed, because changing it reloads the model
 GRAVES = Path(__file__).resolve().parent / "graves"
 SILENT = "The spirits are silent."
 LAST_WORDS_LINES = 60
@@ -34,7 +35,7 @@ def ask(messages, schema):
             "options": {"num_ctx": NUM_CTX, "temperature": 0.2, "seed": 7}}
     req = urllib.request.Request(OLLAMA + "/api/chat", json.dumps(body).encode(),
                                  {"Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=600) as r:  # a cold model load can take minutes
+    with urllib.request.urlopen(req, timeout=1800) as r:  # a cold load, or a Mac short on memory, takes minutes
         reply = json.load(r)
     if reply.get("prompt_eval_count", 0) >= NUM_CTX - 64:
         sys.exit("The evidence is too long for Gemma's context window.")
@@ -145,12 +146,17 @@ def commit_text(c, what):
     return f'{when(iso)}: commit {h} by {author} {what}. Message: "{subject}"'
 
 
-def grave(kind, name, where, path, about, born, died, died_cite, makers, ev):
+def grave(kind, name, where, path, about, facts, line, ev):
     return {"kind": kind, "name": name, "where": where, "path": path, "about": about,
-            "facts": {"born": when(born[1]), "born_commit": born[0], "died": when(died[1]), "died_commit": died[0],
-                      "died_cite": died_cite, "lifespan": lifespan(born[1], died[1]),
-                      "makers": list(dict.fromkeys(makers))},
-            "evidence": ev}
+            "facts": facts, "line": line, "evidence": ev}
+
+
+def code_grave(name, repo, path, about, born, died, died_cite, makers, ev):
+    f = {"born": when(born[1]), "born_commit": born[0], "died": when(died[1]), "died_commit": died[0],
+         "died_cite": died_cite, "lifespan": lifespan(born[1], died[1]), "makers": list(dict.fromkeys(makers))}
+    return grave("code", name, repo.name, path, about, f,
+                 f"{repo.name}/{path.split('#')[0]}: born {f['born']} in {f['born_commit']}, died {f['died']} in "
+                 f"{f['died_commit']}, lived {f['lifespan']}, made by {', '.join(f['makers'])}", ev)
 
 
 def find_code(repo, skip=()):
@@ -201,7 +207,7 @@ def dead_file(repo, path, death, last, skip):
     ev.add(last_words(last.splitlines(), f"Its last version had {len(last.splitlines())} lines. Here it is"))
     for h in haunts(repo, [Path(path).stem], skip):
         ev.add(h)
-    return grave("code", Path(path).name, repo.name, path,
+    return code_grave(Path(path).name, repo, path,
                  f"the file {path}, deleted from the git repository \"{repo.name}\"",
                  born, died, died_cite, [c[0][2] for c in commits], ev)
 
@@ -263,9 +269,181 @@ def dead_group(repo, died, path, names, born, blocks, skip):
     ev.add(last_words(gone, f"The code removed from {path} in commit {died[0]}"))
     for h in haunts(repo, names, skip):
         ev.add(h)
-    return grave("code", f"{Path(path).name}: {', '.join(names)}", repo.name, f"{path}#{names[0]}",
+    return code_grave(f"{Path(path).name}: {', '.join(names)}", repo, f"{path}#{names[0]}",
                  f"the code {', '.join(names)}, removed from {path} in the git repository \"{repo.name}\"",
                  births[0], died, died_cite, [b[2] for b in births] + [died[2]], ev)
+
+
+# ---------- website graveyard ----------
+
+WAYBACK = "https://web.archive.org"
+SITE_BUDGET = 9000  # characters of page text, so the whole prompt fits in NUM_CTX tokens
+PAGE_CHARS = 1800
+BLOCK_TAGS = {"p", "div", "br", "li", "tr", "td", "th", "h1", "h2", "h3", "h4", "h5", "h6", "title", "section",
+              "article", "header", "footer", "table", "ul", "ol", "dd", "dt", "blockquote", "pre", "form", "center"}
+
+
+class PageText(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.lines, self.hidden, self.title, self.in_title = [""], 0, "", False
+
+    def handle_starttag(self, tag, attrs):
+        self.hidden += tag in ("script", "style", "noscript")
+        self.in_title = tag == "title"
+        if tag in BLOCK_TAGS:
+            self.lines.append("")
+
+    def handle_endtag(self, tag):
+        self.hidden -= tag in ("script", "style", "noscript") and self.hidden > 0
+        if tag in BLOCK_TAGS:
+            self.lines.append("")
+
+    def handle_data(self, data):
+        if self.in_title:
+            self.title += data
+        elif not self.hidden:
+            self.lines[-1] += data
+
+
+def prose(line):
+    """True for a line that reads like writing, not a menu, a date list or a link bar."""
+    words = line.split()
+    numeric = sum(any(ch.isdigit() for ch in w) for w in words)
+    lower = sum(w[:1].islower() for w in words)
+    return len(words) >= 4 and numeric <= len(words) / 5 and (re.search(r"[.!?…]", line) or lower >= len(words) / 2)
+
+
+def page_text(html):
+    """A page's title and its readable lines, so menus and link lists drop out."""
+    p = PageText()
+    p.feed(html)
+    title = " ".join(p.title.split())
+    body = "\n".join(l for l in (" ".join(x.split()) for x in p.lines) if prose(l))
+    return f"[title: {title}]\n{body}" if title else body
+
+
+def fetch(url, cache):
+    """GET with curl, cached on disk. curl unzips gzip captures and uses the system's certificates
+    (Python's own certificate store fails against web.archive.org on some Macs)."""
+    if not cache.exists():
+        time.sleep(2.5)  # the Wayback Machine rate-limits
+        r = subprocess.run(["curl", "-sSfL", "--compressed", "--retry", "2", "-m", "90", url], capture_output=True)
+        if r.returncode:
+            raise OSError(f"Could not fetch {url}: {r.stderr.decode().strip()}")
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        cache.write_bytes(r.stdout)
+    raw = cache.read_bytes()
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return raw.decode("cp1252", "replace")  # older pages
+
+
+def stamp(ts):
+    return f"{ts[:4]}-{ts[4:6]}-{ts[6:8]}"
+
+
+def spread(rows, n):
+    """Up to n rows spaced evenly through the list, always keeping the first and the last."""
+    if len(rows) <= n:
+        return rows
+    return [rows[round(i * (len(rows) - 1) / (n - 1))] for i in range(n)]
+
+
+def find_site(domain, pages=(), yearly=4):
+    """A dead website from the Wayback Machine: home pages through the years, plus any snapshots
+    passed as TIMESTAMP/URL (e.g. the page that announced its death)."""
+    domain = re.sub(r"^https?://", "", domain).strip("/")
+    cache = GRAVES / "site" / domain / "cache"
+    rows = json.loads(fetch(f"{WAYBACK}/cdx/search/cdx?url={domain}/&output=json&collapse=timestamp:4"
+                            "&filter=statuscode:200&filter=mimetype:text/html&fl=timestamp,original,length",
+                            cache / "home-by-year.json") or "[[]]")[1:]
+    if not rows:
+        sys.exit(f"The Wayback Machine has no saved home page for {domain}.")
+    real = [r for r in rows if int(r[2]) > 600]  # under ~600 bytes is a redirect or an empty page
+    picks = [p.split("/", 1) for p in pages] + [r[:2] for r in spread(real, yearly)]
+    texts, used = {}, 0
+    for ts, url in picks:  # the pages asked for first, then the yearly home pages, until the budget runs out
+        if (ts, url) in texts or used >= SITE_BUDGET:
+            continue
+        slug = re.sub(r"\W+", "_", url)[:80]
+        text = page_text(fetch(f"{WAYBACK}/web/{ts}id_/{url}", cache / f"{ts}_{slug}.html"))
+        if text.strip():
+            texts[(ts, url)] = text[:min(PAGE_CHARS, SITE_BUDGET - used)]
+            used += len(texts[(ts, url)])
+    ev = Evidence()
+    ev.add(f"The Wayback Machine holds working copies of the {domain} home page from {stamp(rows[0][0])} "
+           f"(the earliest) to {rows[-1][0][:4]} (the latest year).")
+    for (ts, url), text in sorted(texts.items()):
+        ev.add(f"The Wayback Machine's copy of {url}, saved {stamp(ts)}, reads:\n{text}")
+    r = subprocess.run(["curl", "-sSL", "-o", "/dev/null", "-m", "20", "-w", "%{http_code} %{url_effective}",
+                        f"http://{domain}/"], capture_output=True, text=True)
+    code, _, final = r.stdout.partition(" ")
+    ev.add(f"Checked live on {date.today()}: http://{domain}/ " +
+           (f"answers with HTTP {code}, ending at {final}." if code not in ("", "000") else "does not answer."))
+    facts = {"first_saved": stamp(rows[0][0]), "last_year": rows[-1][0][:4], "pages": len(texts)}
+    return grave("site", domain, domain, "site",
+                 f"the website {domain}, as its pages were saved by the Internet Archive's Wayback Machine", facts,
+                 f"saved by the Wayback Machine from {facts['first_saved']} to {facts['last_year']}; "
+                 f"{len(texts)} page(s) read", ev)
+
+
+# ---------- apps graveyard ----------
+
+MDLS = sorted(["kMDItemLastUsedDate", "kMDItemDateAdded", "kMDItemUseCount", "kMDItemPhysicalSize"])  # mdls -raw answers in name order
+
+
+def mdls(app):
+    out = subprocess.run(["mdls", "-raw", *[x for n in MDLS for x in ("-name", n)], str(app)],
+                         capture_output=True, text=True).stdout.split("\0")
+    return {n: (None if v == "(null)" else v) for n, v in zip(MDLS, out)}
+
+
+def md_date(v):
+    return datetime.strptime(v, "%Y-%m-%d %H:%M:%S %z") if v else None
+
+
+def find_apps(days=365, folder="/Applications"):
+    """Apps in FOLDER that macOS says haven't been opened in DAYS days. Apps only, never files."""
+    now = datetime.now(timezone.utc)
+    graves = []
+    for app in sorted(Path(folder).glob("*.app")):
+        md = mdls(app)
+        used, added = md_date(md["kMDItemLastUsedDate"]), md_date(md["kMDItemDateAdded"])
+        if used and (now - used).days < days:
+            continue  # still alive
+        try:
+            info = plistlib.loads((app / "Contents" / "Info.plist").read_bytes())
+        except (OSError, plistlib.InvalidFileException):
+            info = {}
+        ev = Evidence()
+        if added:
+            ev.add(f"It was added to {folder} on {added:%Y-%m-%d}.")
+        died_cite = ev.add(f"macOS last saw it opened on {used:%Y-%m-%d}, {(now - used).days} days before "
+                           f"today ({now:%Y-%m-%d})." if used else
+                           f"macOS has no record of it ever being opened (checked {now:%Y-%m-%d}).")
+        if md["kMDItemUseCount"]:
+            ev.add(f"macOS counted it being opened {md['kMDItemUseCount']} time(s).")
+        version = info.get("CFBundleShortVersionString") or info.get("CFBundleVersion")
+        if version:
+            ev.add(f"Its version is {version}; its bundle id is {info.get('CFBundleIdentifier', 'unknown')}.")
+        if info.get("NSHumanReadableCopyright"):
+            ev.add(f"Its copyright line reads: {info['NSHumanReadableCopyright'].strip()}")
+        if info.get("LSMinimumSystemVersion"):
+            ev.add(f"It needs macOS {info['LSMinimumSystemVersion']} or later.")
+        if info.get("LSApplicationCategoryType"):
+            ev.add(f"Its category is {info['LSApplicationCategoryType'].split('.')[-1].replace('-', ' ')}.")
+        if md["kMDItemPhysicalSize"]:
+            ev.add(f"It takes {int(md['kMDItemPhysicalSize']) / 1e6:.0f} MB on disk.")
+        if (app / "Contents" / "_MASReceipt").exists():
+            ev.add("It came from the Mac App Store.")
+        facts = {"added": f"{added:%Y-%m-%d}" if added else None, "last_used": f"{used:%Y-%m-%d}" if used else None,
+                 "idle_days": (now - used).days if used else None, "died_cite": died_cite}
+        graves.append(grave("app", app.stem, "applications", app.stem, f"the Mac app {app.stem}", facts,
+                            f"last opened {facts['last_used']} ({facts['idle_days']} days ago)" if used else
+                            "no record of ever being opened" + (f", added {facts['added']}" if added else ""), ev))
+    return graves
 
 
 # ---------- graves on disk ----------
@@ -295,10 +473,7 @@ def load(name):
 
 
 def describe(g):
-    f = g["facts"]
-    return (f"{g['name']}  ({g['where']}/{g['path']})\n"
-            f"  born {f['born']} in {f['born_commit']}, died {f['died']} in {f['died_commit']}, "
-            f"lived {f['lifespan']}, made by {', '.join(f['makers'])}")
+    return f"{g['name']}\n  {g.get('line', '')}"
 
 
 # ---------- the medium ----------
@@ -405,6 +580,21 @@ def selftest():
         assert guard(g, {"answer": "Who knows.", "silent": True, "cites": ["E1"]}) == (SILENT, [])
         assert guard(g, {"answer": "I died on 4 Oct [E3].", "silent": False, "cites": ["E3", "E99", "E3"]}) \
             == ("I died on 4 Oct.", ["E3"])
+        # websites: menus and date lists drop out, prose and the title stay
+        html = ("<html><head><title>Bye Bye Site</title><script>var x = 1;</script></head><body>"
+                "<ul><li>June 2014 (1)</li></ul><div>Archives June 2014 (1) May 2014 (3) April 2014 (2)</div>"
+                "<div>Home About Blog Contact Us Now</div><p>We will shut down the site on 30 September 2014.</p>"
+                "</body></html>")
+        assert page_text(html) == "[title: Bye Bye Site]\nWe will shut down the site on 30 September 2014.", \
+            page_text(html)
+        assert spread(list(range(10)), 4) == [0, 3, 6, 9] and spread([1, 2], 4) == [1, 2]
+
+        # apps: mdls answers in name order; a date must never land in a number field
+        apps = sorted(Path("/Applications").glob("*.app"))[:5] if sys.platform == "darwin" else []
+        for app in apps:
+            md = mdls(app)
+            assert all(v is None or v.isdigit() for v in (md["kMDItemPhysicalSize"], md["kMDItemUseCount"])), md
+            md_date(md["kMDItemLastUsedDate"]), md_date(md["kMDItemDateAdded"])
         print("offline checks passed")
 
         if not gemma_up():
@@ -428,9 +618,13 @@ def main():
     ap = argparse.ArgumentParser(description="Séance: talk to dead code with a local Gemma 4.")
     sub = ap.add_subparsers(dest="cmd", required=True)
     fp = sub.add_parser("find", help="find the dead and save their evidence")
-    fp.add_argument("graveyard", choices=["code"])
-    fp.add_argument("target", help="path to a git repository")
-    fp.add_argument("--skip", action="append", default=[], metavar="GLOB", help="ignore deleted paths like this")
+    fp.add_argument("graveyard", choices=["code", "site", "apps"])
+    fp.add_argument("target", nargs="?", help="code: a git repository; site: a domain; apps: a folder "
+                                              "(default /Applications)")
+    fp.add_argument("--skip", action="append", default=[], metavar="GLOB", help="code: ignore deleted paths like this")
+    fp.add_argument("--page", action="append", default=[], metavar="TIMESTAMP/URL",
+                    help="site: also read this Wayback snapshot, e.g. 20140630142637/http://example.com/bye.html")
+    fp.add_argument("--days", type=int, default=365, help="apps: unused for at least this many days")
     sub.add_parser("list", help="every grave found so far")
     tp = sub.add_parser("tombstone", help="Gemma writes the tombstone")
     tp.add_argument("name")
@@ -443,10 +637,14 @@ def main():
     if a.cmd == "selftest":
         return selftest()
     if a.cmd == "find":
-        graves = find_code(a.target, a.skip)
+        if a.graveyard != "apps" and not a.target:
+            sys.exit(f"find {a.graveyard} needs a target.")
+        graves = (find_code(a.target, a.skip) if a.graveyard == "code" else
+                  [find_site(a.target, a.page)] if a.graveyard == "site" else
+                  find_apps(a.days, a.target or "/Applications"))
         for g in graves:
             save(g)
-        print(f"{len(graves)} grave(s) dug in {Path(a.target).name}:\n")
+        print(f"{len(graves)} grave(s) dug:\n")
         print("\n\n".join(describe(g) for g in graves) or "  none (or all skipped)")
         return
     if a.cmd == "list":
