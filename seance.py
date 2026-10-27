@@ -16,7 +16,7 @@ evidence doesn't say, the answer is "The spirits are silent."
 Python standard library only. Gemma 4 runs on this machine through Ollama.
 """
 import argparse, fnmatch, json, os, plistlib, re, subprocess, sys, tempfile, time, urllib.request
-from datetime import date, datetime, timezone
+from datetime import date, datetime
 from html.parser import HTMLParser
 from pathlib import Path
 
@@ -46,7 +46,7 @@ def ask(messages, schema):
             return json.loads(reply["message"]["content"])
         except json.JSONDecodeError:
             pass
-    sys.exit("Gemma's reply was cut off twice. Try again.")
+    return None  # cut off twice: Gemma got stuck
 
 
 def gemma_up():
@@ -427,7 +427,7 @@ def md_date(v):
 
 def find_apps(days=365, folder="/Applications"):
     """Apps in FOLDER that macOS says haven't been opened in DAYS days. Apps only, never files."""
-    now = datetime.now(timezone.utc)
+    now = datetime.now().astimezone()  # local time, so "today" is the user's today
     graves = []
     for app in sorted(Path(folder).glob("*.app")):
         md = mdls(app)
@@ -519,6 +519,8 @@ def tombstone(g):
                   "epitaph: one short line it would say about itself, under 15 words, in its own voice. Poetic, "
                   "but no new facts, and don't copy a commit message or a page title."}],
                 schema)
+    if reply is None:
+        sys.exit("Gemma got stuck writing this tombstone twice. Try again.")
     cites = cited(g, reply["cites"])
     cause = reply["cause_of_death"].strip()
     if not cites or not numbers_ok(cause, g, cites):
@@ -538,14 +540,14 @@ def summon(g, question, history=()):
         "Answer every part of the question that the evidence covers. Only if the evidence covers none of it, "
         "set silent to true, leave cites empty, and do not guess.")
     reply = ask([{"role": "system", "content": system}, *history, {"role": "user", "content": question}], schema)
-    return guard(g, reply)
+    return guard(g, reply) if reply else (SILENT, [])  # a reply that loops to the cap has nothing to stand on
 
 
 def receipt(text, answer):
     """The sentence of a piece of evidence that shares the most words with the answer."""
     said = set(re.findall(r"\w{4,}", answer.lower()))
     sentences = [x.strip() for x in re.split(r"(?<=[.!?])\s+|\n", text) if x.strip()]
-    return max(sentences, key=lambda x: len(said & set(re.findall(r"\w{4,}", x.lower()))))
+    return max(sentences, key=lambda x: sum(map(len, said & set(re.findall(r"\w{4,}", x.lower())))))
 
 
 def show_answer(g, answer, cites):
