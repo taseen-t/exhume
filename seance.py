@@ -32,19 +32,21 @@ BOILERPLATE = re.compile(r"\s*(import\s|package\s|from\s+\S+\s+import\s|#include
 # ---------- Gemma ----------
 
 def ask(messages, schema):
-    body = {"model": MODEL, "messages": messages, "stream": False, "think": False,
-            "format": schema, "keep_alive": "30m",
-            "options": {"num_ctx": NUM_CTX, "num_predict": 400, "temperature": 0.2, "seed": 7}}
-    req = urllib.request.Request(OLLAMA + "/api/chat", json.dumps(body).encode(),
-                                 {"Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=1800) as r:  # a cold load, or a Mac short on memory, takes minutes
-        reply = json.load(r)
-    if reply.get("prompt_eval_count", 0) >= NUM_CTX - 64:
-        sys.exit("The evidence is too long for Gemma's context window.")
-    try:
-        return json.loads(reply["message"]["content"])
-    except json.JSONDecodeError:
-        sys.exit("Gemma's reply was not complete JSON (cut off at num_predict?). Try again.")
+    for seed in (7, 8):  # a reply that loops until the 400-token cap is cut off; one retry with a new seed
+        body = {"model": MODEL, "messages": messages, "stream": False, "think": False,
+                "format": schema, "keep_alive": "30m",
+                "options": {"num_ctx": NUM_CTX, "num_predict": 400, "temperature": 0.2, "seed": seed}}
+        req = urllib.request.Request(OLLAMA + "/api/chat", json.dumps(body).encode(),
+                                     {"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=1800) as r:  # a cold load, or a Mac short on memory, takes minutes
+            reply = json.load(r)
+        if reply.get("prompt_eval_count", 0) >= NUM_CTX - 64:
+            sys.exit("The evidence is too long for Gemma's context window.")
+        try:
+            return json.loads(reply["message"]["content"])
+        except json.JSONDecodeError:
+            pass
+    sys.exit("Gemma's reply was cut off twice. Try again.")
 
 
 def gemma_up():
@@ -109,13 +111,17 @@ def when(iso):
     return iso[:16].replace("T", " ")
 
 
+def plural(n, word):
+    return f"{n} {word}{'' if n == 1 else 's'}"
+
+
 def lifespan(a, b):
     mins = int((datetime.fromisoformat(b) - datetime.fromisoformat(a)).total_seconds() // 60)
     if mins < 60:
-        return f"{mins} minute(s)"
+        return plural(mins, "minute")
     if mins < 48 * 60:
-        return f"{mins // 60} hour(s) {mins % 60} minute(s)"
-    return f"{mins // 1440} day(s)"
+        return f"{plural(mins // 60, 'hour')} {plural(mins % 60, 'minute')}"
+    return plural(mins // 1440, "day")
 
 
 def mentions(repo, word, skip):
@@ -130,11 +136,13 @@ def last_words(lines, label):
     return f"{label}, without blank, import and package lines{cut}:\n```\n" + "\n".join(body[:LAST_WORDS_LINES]) + "\n```"
 
 
-def haunts(repo, names, skip):
+def haunts(repo, names, skip, words=False):
     out = []
     for n in names:
+        if not words and n.isalpha() and n.islower():
+            continue  # a function called "mark" turns up in prose; only identifier-like names are searched
         hits = [h for h in mentions(repo, n, skip) if def_name(h.split(":", 2)[-1]) != n]
-        out.append(f"The name \"{n}\" still appears {len(hits)} time(s) in the repository's files today:\n" +
+        out.append(f"The name \"{n}\" still appears {plural(len(hits), 'time')} in the repository's files today:\n" +
                    "\n".join(h[:200] for h in hits[:5]) if hits
                    else f"The name \"{n}\" no longer appears anywhere in the repository's files today.")
     return out
@@ -210,7 +218,7 @@ def dead_file(repo, path, death, last, skip):
     ev.add(f"The same commit ({died[0]}) added: {', '.join(added[:10])}." if added
            else f"The same commit ({died[0]}) added no new files.")
     ev.add(last_words(last.splitlines(), f"Its last version had {len(last.splitlines())} lines. Here it is"))
-    for h in haunts(repo, [Path(path).stem], skip):
+    for h in haunts(repo, [Path(path).stem], skip, words=True):
         ev.add(h)
     return code_grave(Path(path).name, repo, path,
                  f"the file {path}, deleted from the git repository \"{repo.name}\"",
@@ -391,7 +399,7 @@ def find_site(domain, pages=(), yearly=4):
     return grave("site", domain, domain, domain,
                  f"the website {domain}, as its pages were saved by the Internet Archive's Wayback Machine", facts,
                  f"saved by the Wayback Machine from {facts['first_saved']} to {facts['last_year']}; "
-                 f"{len(texts)} page(s) read", ev)
+                 f"{plural(len(texts), 'page')} read", ev)
 
 
 # ---------- apps graveyard ----------
@@ -425,11 +433,11 @@ def find_apps(days=365, folder="/Applications"):
         ev = Evidence()
         if added:
             ev.add(f"It was added to {folder} on {added:%Y-%m-%d}.")
-        died_cite = ev.add(f"macOS last saw it opened on {used:%Y-%m-%d}, {(now - used).days} days before "
+        died_cite = ev.add(f"macOS last saw it opened on {used:%Y-%m-%d}, {plural((now - used).days, 'day')} before "
                            f"today ({now:%Y-%m-%d})." if used else
                            f"macOS has no record of it ever being opened (checked {now:%Y-%m-%d}).")
         if md["kMDItemUseCount"]:
-            ev.add(f"macOS counted it being opened {md['kMDItemUseCount']} time(s).")
+            ev.add(f"macOS counted it being opened {plural(int(md['kMDItemUseCount']), 'time')}.")
         version = info.get("CFBundleShortVersionString") or info.get("CFBundleVersion")
         if version:
             ev.add(f"Its version is {version}; its bundle id is {info.get('CFBundleIdentifier', 'unknown')}.")
@@ -446,7 +454,7 @@ def find_apps(days=365, folder="/Applications"):
         facts = {"added": f"{added:%Y-%m-%d}" if added else None, "last_used": f"{used:%Y-%m-%d}" if used else None,
                  "idle_days": (now - used).days if used else None, "died_cite": died_cite}
         graves.append(grave("app", app.stem, "applications", app.stem, f"the Mac app {app.stem}", facts,
-                            f"last opened {facts['last_used']} ({facts['idle_days']} days ago)" if used else
+                            f"last opened {facts['last_used']} ({plural(facts['idle_days'], 'day')} ago)" if used else
                             "no record of ever being opened" + (f", added {facts['added']}" if added else ""), ev))
     return graves
 
@@ -495,10 +503,13 @@ def tombstone(g):
         "cites": {"type": "array", "items": {"type": "string", "enum": ids}}}}
     reply = ask([{"role": "system", "content": RULES.format(about=g["about"], evidence=evidence_block(g))},
                  {"role": "user", "content":
-                  "Write its tombstone. cause_of_death: one plain sentence on why it died (was deleted, shut "
-                  "down or stopped being used), only as the "
-                  "evidence tells it (if the evidence gives no reason, say the record does not say why). "
-                  "epitaph: one short line in its own voice, under 15 words, poetic but with no new facts."}],
+                  "Write its tombstone.\n"
+                  "cause_of_death: one plain sentence giving the REASON it died (was deleted, shut down or stopped "
+                  "being used), as the evidence explains it: a commit message, a page, a code comment or a record. "
+                  "Don't just name the commit or date that killed it. If the evidence gives no reason, say the "
+                  "record does not say why.\n"
+                  "epitaph: one short line it would say about itself, under 15 words, in its own voice. Poetic, "
+                  "but no new facts, and don't copy a commit message or a page title."}],
                 schema)
     g["tombstone"] = {"cause_of_death": reply["cause_of_death"].strip(), "epitaph": reply["epitaph"].strip(),
                       "cites": cited(g, reply["cites"])}
@@ -568,15 +579,15 @@ def selftest():
         save(g)
         f = g["facts"]
         assert (f["born"], f["died"], f["makers"], f["lifespan"]) == \
-            ("2026-10-01 12:00", "2026-10-04 12:00", ["Ada"], "3 day(s)"), f
+            ("2026-10-01 12:00", "2026-10-04 12:00", ["Ada"], "3 days"), f
         t = trick["facts"]
-        assert (t["born"], t["died"], t["lifespan"]) == ("2026-10-03 12:00", "2026-10-05 12:00", "2 day(s)"), t
+        assert (t["born"], t["died"], t["lifespan"]) == ("2026-10-03 12:00", "2026-10-05 12:00", "2 days"), t
         trick_text = "\n".join(e["text"] for e in trick["evidence"])
         for must in ("added float_away", "removed float_away from tricks.py", "return 'whoosh'", "nobody floats"):
             assert must in trick_text, must
         texts = "\n".join(e["text"] for e in g["evidence"])
         for must in ("created this file", "deleted this file", "The ghost scared nobody", "added: spirit.py",
-                     "return 'BOO'", 'still appears 1 time(s)', "keep.py:1:"):
+                     "return 'BOO'", 'still appears 1 time ', "keep.py:1:"):
             assert must in texts, must
         assert load("ghost")["path"] == "ghost.py"
         save(grave("site", "example.org", "example.org", "example.org", "a site", {}, "", []))
@@ -652,7 +663,7 @@ def main():
                   find_apps(a.days, a.target or "/Applications"))
         for g in graves:
             save(g)
-        print(f"{len(graves)} grave(s) dug:\n")
+        print(f"{plural(len(graves), 'grave')} dug:\n")
         print("\n\n".join(describe(g) for g in graves) or "  none (or all skipped)")
         return
     if a.cmd == "list":
