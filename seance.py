@@ -32,7 +32,7 @@ BOILERPLATE = re.compile(r"\s*(import\s|package\s|from\s+\S+\s+import\s|#include
 def ask(messages, schema):
     body = {"model": MODEL, "messages": messages, "stream": False, "think": False,
             "format": schema, "keep_alive": "30m",
-            "options": {"num_ctx": NUM_CTX, "temperature": 0.2, "seed": 7}}
+            "options": {"num_ctx": NUM_CTX, "num_predict": 400, "temperature": 0.2, "seed": 7}}
     req = urllib.request.Request(OLLAMA + "/api/chat", json.dumps(body).encode(),
                                  {"Content-Type": "application/json"})
     with urllib.request.urlopen(req, timeout=1800) as r:  # a cold load, or a Mac short on memory, takes minutes
