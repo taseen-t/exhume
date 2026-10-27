@@ -1,0 +1,473 @@
+#!/usr/bin/env python3
+"""Séance: a local Gemma 4 medium for things that died.
+
+  python3 seance.py find code REPO [--skip GLOB ...]   find deleted files, save their evidence
+  python3 seance.py list                               every grave found so far
+  python3 seance.py tombstone NAME                     Gemma writes the tombstone
+  python3 seance.py summon NAME ["question"]           ask the dead (a chat if no question)
+  python3 seance.py selftest
+
+Code gathers the facts (dates, commits, authors) and numbers each piece of evidence.
+Gemma only writes the words, and may only cite evidence that exists. When the
+evidence doesn't say, the answer is "The spirits are silent."
+
+Python standard library only. Gemma 4 runs on this machine through Ollama.
+"""
+import argparse, fnmatch, json, os, re, subprocess, sys, tempfile, urllib.request
+from datetime import datetime
+from pathlib import Path
+
+MODEL = os.environ.get("SEANCE_MODEL", "gemma4:e4b")
+OLLAMA = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
+NUM_CTX = 8192  # fixed on every call: changing it makes Ollama reload the model
+GRAVES = Path(__file__).resolve().parent / "graves"
+SILENT = "The spirits are silent."
+LAST_WORDS_LINES = 60
+BOILERPLATE = re.compile(r"\s*(import\s|package\s|from\s+\S+\s+import\s|#include\s|using\s)")
+
+
+# ---------- Gemma ----------
+
+def ask(messages, schema):
+    body = {"model": MODEL, "messages": messages, "stream": False, "think": False,
+            "format": schema, "keep_alive": "30m",
+            "options": {"num_ctx": NUM_CTX, "temperature": 0.2, "seed": 7}}
+    req = urllib.request.Request(OLLAMA + "/api/chat", json.dumps(body).encode(),
+                                 {"Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=600) as r:  # a cold model load can take minutes
+        reply = json.load(r)
+    if reply.get("prompt_eval_count", 0) >= NUM_CTX - 64:
+        sys.exit("The evidence is too long for Gemma's context window.")
+    return json.loads(reply["message"]["content"])
+
+
+def gemma_up():
+    try:
+        with urllib.request.urlopen(OLLAMA + "/api/tags", timeout=3) as r:
+            return any(m["name"] == MODEL for m in json.load(r)["models"])
+    except OSError:
+        return False
+
+
+# ---------- evidence ----------
+
+def evidence_block(grave):
+    return "\n".join(f"[{e['id']}] {e['text']}" for e in grave["evidence"])
+
+
+def cited(grave, ids):
+    """Keep only ids that exist in this grave's evidence, in order, once each."""
+    real = {e["id"] for e in grave["evidence"]}
+    return list(dict.fromkeys(i for i in ids if i in real))
+
+
+def guard(grave, reply):
+    """Gemma's summon reply -> (answer, cites). No real evidence cited means silence."""
+    cites = cited(grave, reply.get("cites", []))
+    answer = re.sub(r"\s*\[[^\]]*\]", "", reply.get("answer", "")).strip()  # ids are shown from `cites`
+    if reply.get("silent") or not cites or not answer:
+        return SILENT, []
+    return answer, cites
+
+
+# ---------- code graveyard ----------
+
+# A line that defines a function, method or class. A heuristic for common languages, not a parser.
+DEF = re.compile(r"\s*(?:export\s+)?(?:async\s+)?(?:def|function|func|fun|fn|class|interface|enum|struct|trait)\s+"
+                 r"(?:\([^)]*\)\s*)?([A-Za-z_]\w*)")
+METHOD = re.compile(r"\s*(?:@\w+\s+)*(?:(?:public|private|protected|static|final|synchronized|abstract|native|"
+                    r"default|override|open|internal|suspend)\s+)*([\w<>\[\].?,]+)\s+([A-Za-z_]\w*)\s*\([^;=]*$")
+NOT_TYPES = {"return", "new", "else", "if", "for", "while", "switch", "catch", "throw", "case", "await", "yield",
+             "do", "try", "in", "of", "print", "assert", "not", "and", "or", "is", "sizeof", "typeof", "delete"}
+LOG_FORMAT = "--format=%x01%h%x1f%aI%x1f%an%x1f%s"  # hash, ISO date, author name (never email), subject
+
+
+def def_name(line):
+    if m := DEF.match(line):
+        return m.group(1)
+    m = METHOD.match(line)
+    return m.group(2) if m and m.group(1) not in NOT_TYPES else None
+
+
+def git(repo, *args, raw=False, check=True):
+    out = subprocess.run(["git", "-C", str(repo), "-c", "core.quotePath=false", *args],
+                         capture_output=True, check=check).stdout
+    return out if raw else out.decode("utf-8", "replace")
+
+
+def skipped(path, skip):
+    return any(fnmatch.fnmatch(path, g) for g in skip)
+
+
+def when(iso):
+    return iso[:16].replace("T", " ")
+
+
+def lifespan(a, b):
+    mins = int((datetime.fromisoformat(b) - datetime.fromisoformat(a)).total_seconds() // 60)
+    if mins < 60:
+        return f"{mins} minute(s)"
+    if mins < 48 * 60:
+        return f"{mins // 60} hour(s) {mins % 60} minute(s)"
+    return f"{mins // 1440} day(s)"
+
+
+def mentions(repo, word, skip):
+    """Lines in today's files (HEAD) that contain WORD as a whole word: 'path:line:text'."""
+    hits = git(repo, "grep", "-I", "-n", "-w", "-F", word, "HEAD", check=False).splitlines()
+    return [h.removeprefix("HEAD:") for h in hits if not skipped(h.removeprefix("HEAD:").split(":", 1)[0], skip)]
+
+
+def last_words(lines, label):
+    body = [l[:160] for l in lines if l.strip() and not BOILERPLATE.match(l)]
+    cut = f" (the first {LAST_WORDS_LINES} lines shown)" if len(body) > LAST_WORDS_LINES else ""
+    return f"{label}, without blank, import and package lines{cut}:\n```\n" + "\n".join(body[:LAST_WORDS_LINES]) + "\n```"
+
+
+def haunts(repo, names, skip):
+    out = []
+    for n in names:
+        hits = [h for h in mentions(repo, n, skip) if def_name(h.split(":", 2)[-1]) != n]
+        out.append(f"The name \"{n}\" still appears {len(hits)} time(s) in the repository's files today:\n" +
+                   "\n".join(h[:200] for h in hits[:5]) if hits
+                   else f"The name \"{n}\" no longer appears anywhere in the repository's files today.")
+    return out
+
+
+class Evidence(list):
+    def add(self, text):
+        self.append({"id": f"E{len(self) + 1}", "text": text})
+        return self[-1]["id"]
+
+
+def commit_text(c, what):
+    h, iso, author, subject = c
+    return f'{when(iso)}: commit {h} by {author} {what}. Message: "{subject}"'
+
+
+def grave(kind, name, where, path, about, born, died, died_cite, makers, ev):
+    return {"kind": kind, "name": name, "where": where, "path": path, "about": about,
+            "facts": {"born": when(born[1]), "born_commit": born[0], "died": when(died[1]), "died_commit": died[0],
+                      "died_cite": died_cite, "lifespan": lifespan(born[1], died[1]),
+                      "makers": list(dict.fromkeys(makers))},
+            "evidence": ev}
+
+
+def find_code(repo, skip=()):
+    """Everything deleted from REPO's history that is still gone today: whole files, then functions."""
+    repo = Path(repo).expanduser().resolve()
+    return dead_files(repo, skip) + dead_functions(repo, skip)
+
+
+def dead_files(repo, skip):
+    deaths = {}  # path -> latest commit that deleted it
+    for chunk in git(repo, "log", "-M", "--diff-filter=D", "--name-only", "--format=%x01%H").split("\x01")[1:]:
+        commit, *paths = chunk.split("\n")
+        for p in filter(None, paths):
+            deaths.setdefault(p, commit)
+    graves = []
+    for path, death in deaths.items():
+        if skipped(path, skip) or subprocess.run(["git", "-C", str(repo), "cat-file", "-e", f"HEAD:{path}"],
+                                                 capture_output=True).returncode == 0:
+            continue  # skipped, or came back to life
+        body = git(repo, "show", f"{death}^:{path}", raw=True)
+        if b"\0" in body[:8000]:
+            continue  # binary: nothing for Gemma to read
+        graves.append(dead_file(repo, path, death, body.decode("utf-8", "replace"), skip))
+    return graves
+
+
+def dead_file(repo, path, death, last, skip):
+    ev = Evidence()
+    commits = []
+    log = git(repo, "log", "--follow", "-M", "--name-status", LOG_FORMAT, death, "--", path)
+    for chunk in reversed(log.split("\x01")[1:]):  # oldest first
+        head, *rest = chunk.strip().split("\n")
+        c = tuple(head.split("\x1f"))
+        status = next((l.split("\t") for l in rest if l and l[0] in "AMDRC"), ["M"])
+        what = {"A": "created this file", "M": "changed this file", "D": "deleted this file"}.get(status[0][0])
+        if status[0][0] in "RC":
+            what = f"{'renamed' if status[0][0] == 'R' else 'copied'} it from {status[1]} to {status[2]}"
+        commits.append((c, ev.add(commit_text(c, what))))
+    (born, _), (died, died_cite) = commits[0], commits[-1]
+    ev.add(f"It lived {lifespan(born[1], died[1])}, from {when(born[1])} to {when(died[1])}.")
+    message = git(repo, "log", "-1", "--format=%B", death).strip()
+    if "\n" in message:
+        ev.add(f"The full message of the commit that deleted it ({died[0]}):\n{message}")
+    added = [l.split("\t")[-1] for l in git(repo, "show", "-M", "--name-status", "--format=", death).splitlines()
+             if l and l[0] in "AR" and not skipped(l.split("\t")[-1], skip)]
+    ev.add(f"The same commit ({died[0]}) added: {', '.join(added[:10])}." if added
+           else f"The same commit ({died[0]}) added no new files.")
+    ev.add(last_words(last.splitlines(), f"Its last version had {len(last.splitlines())} lines. Here it is"))
+    for h in haunts(repo, [Path(path).stem], skip):
+        ev.add(h)
+    return grave("code", Path(path).name, repo.name, path,
+                 f"the file {path}, deleted from the git repository \"{repo.name}\"",
+                 born, died, died_cite, [c[0][2] for c in commits], ev)
+
+
+def dead_functions(repo, skip):
+    """Functions and classes removed from files that live on, grouped by the commit and file they died in."""
+    # ponytail: reads the whole history's diff into memory; fine for side projects, stream it for huge repos
+    born, died, hunks = {}, {}, {}  # name -> commit; name -> (commit, path); (hash, path) -> removed blocks
+    log = git(repo, "log", "-p", "-M", "--unified=0", "--no-color", LOG_FORMAT)
+    for chunk in reversed(log.split("\x01")[1:]):  # oldest first
+        head, _, diff = chunk.partition("\n")
+        c = tuple(head.split("\x1f"))
+        added, removed = set(), []
+        for fdiff in re.split(r"^diff --git ", diff, flags=re.M)[1:]:
+            lines = fdiff.split("\n")
+            path = lines[0].rsplit(" b/", 1)[-1]
+            if skipped(path, skip) or any(l.startswith("deleted file mode") for l in lines[1:6]):
+                continue  # a deleted file is a grave of its own
+            blocks = []  # per hunk: [removed lines, (name, def line) removed, def lines added; names as \0]
+            for l in lines[1:]:
+                if l.startswith("@@"):
+                    blocks.append([[], [], []])
+                elif l.startswith("+") and not l.startswith("+++ ") and blocks:
+                    if n := def_name(l[1:]):
+                        added.add(n)
+                        born.setdefault(n, c)
+                        blocks[-1][2].append(l[1:].replace(n, "\0").strip())
+                elif l.startswith("-") and not l.startswith("--- ") and blocks:
+                    blocks[-1][0].append(l[1:])
+                    if n := def_name(l[1:]):
+                        blocks[-1][1].append((n, l[1:].replace(n, "\0").strip()))
+            # a def line that comes back in the same hunk with only its name changed is a rename, not a death
+            defs = [n for gone, rm, add in blocks for n, shape in rm if shape not in add]
+            if defs:
+                hunks[(c[0], path)] = [gone for gone, rm, add in blocks]
+                removed += [(n, path) for n in defs]
+        for n, path in removed:
+            if n not in added:  # removed and added in one commit = changed or moved, not dead
+                died[n] = (c, path)
+    groups = {}
+    for n, (c, path) in died.items():
+        if n in born and not any(def_name(h.split(":", 2)[-1]) == n for h in mentions(repo, n, skip)):
+            groups.setdefault((c, path), []).append(n)
+    return [dead_group(repo, c, path, names, born, hunks[(c[0], path)], skip) for (c, path), names in groups.items()]
+
+
+def dead_group(repo, died, path, names, born, blocks, skip):
+    ev = Evidence()
+    births = sorted({born[n] for n in names}, key=lambda c: c[1])
+    for b in births:
+        mine = [n for n in names if born[n] == b]
+        ev.add(commit_text(b, f"added {', '.join(mine)}"))
+    died_cite = ev.add(commit_text(died, f"removed {', '.join(names)} from {path}, while {path} itself lived on"))
+    ev.add(f"It lived {lifespan(births[0][1], died[1])}, from {when(births[0][1])} to {when(died[1])}.")
+    message = git(repo, "log", "-1", "--format=%B", died[0]).strip()
+    if "\n" in message:
+        ev.add(f"The full message of the commit that removed it ({died[0]}):\n{message}")
+    gone = [l for b in blocks if any(def_name(x) in names for x in b) for l in b]
+    ev.add(last_words(gone, f"The code removed from {path} in commit {died[0]}"))
+    for h in haunts(repo, names, skip):
+        ev.add(h)
+    return grave("code", f"{Path(path).name}: {', '.join(names)}", repo.name, f"{path}#{names[0]}",
+                 f"the code {', '.join(names)}, removed from {path} in the git repository \"{repo.name}\"",
+                 births[0], died, died_cite, [b[2] for b in births] + [died[2]], ev)
+
+
+# ---------- graves on disk ----------
+
+def grave_file(g):
+    return GRAVES / g["kind"] / g["where"] / (g["path"].replace("/", "__") + ".json")
+
+
+def save(g):
+    f = grave_file(g)
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text(json.dumps(g, indent=1, ensure_ascii=False))
+
+
+def all_graves():
+    return sorted(GRAVES.glob("*/*/*.json"))
+
+
+def load(name):
+    files = all_graves()
+    match = [f for f in files if f.stem.lower() == name.lower().replace("/", "__")] or \
+            [f for f in files if name.lower() in f.stem.lower()]
+    if len(match) != 1:
+        sys.exit(f"No grave called {name!r}." if not match else
+                 f"{name!r} matches {len(match)} graves: " + ", ".join(f.stem for f in match))
+    return json.loads(match[0].read_text())
+
+
+def describe(g):
+    f = g["facts"]
+    return (f"{g['name']}  ({g['where']}/{g['path']})\n"
+            f"  born {f['born']} in {f['born_commit']}, died {f['died']} in {f['died_commit']}, "
+            f"lived {f['lifespan']}, made by {', '.join(f['makers'])}")
+
+
+# ---------- the medium ----------
+
+RULES = ("You are the medium at a séance. You speak for {about}.\n"
+         "Use ONLY the numbered evidence below. Never add a fact, date, name, number or reason that the "
+         "evidence does not state. List in `cites` every evidence id you used.\n\nEvidence:\n{evidence}")
+
+
+def tombstone(g):
+    ids = [e["id"] for e in g["evidence"]]
+    schema = {"type": "object", "required": ["cause_of_death", "epitaph", "cites"], "properties": {
+        "cause_of_death": {"type": "string"}, "epitaph": {"type": "string"},
+        "cites": {"type": "array", "items": {"type": "string", "enum": ids}}}}
+    reply = ask([{"role": "system", "content": RULES.format(about=g["about"], evidence=evidence_block(g))},
+                 {"role": "user", "content":
+                  "Write its tombstone. cause_of_death: one plain sentence on why it was removed, only as the "
+                  "evidence tells it (if the evidence gives no reason, say the record does not say why). "
+                  "epitaph: one short line in its own voice, under 15 words, poetic but with no new facts."}],
+                schema)
+    g["tombstone"] = {"cause_of_death": reply["cause_of_death"].strip(), "epitaph": reply["epitaph"].strip(),
+                      "cites": cited(g, reply["cites"])}
+    save(g)
+    return g["tombstone"]
+
+
+def summon(g, question, history=()):
+    ids = [e["id"] for e in g["evidence"]]
+    schema = {"type": "object", "required": ["answer", "silent", "cites"], "properties": {
+        "answer": {"type": "string"}, "silent": {"type": "boolean"},
+        "cites": {"type": "array", "items": {"type": "string", "enum": ids}}}}
+    system = RULES.format(about=g["about"], evidence=evidence_block(g)) + (
+        "\n\nAnswer as the spirit, in the first person, in one to three short sentences. "
+        "If the evidence does not contain the answer, set silent to true, leave cites empty, and do not guess.")
+    reply = ask([{"role": "system", "content": system}, *history, {"role": "user", "content": question}], schema)
+    return guard(g, reply)
+
+
+def show_answer(g, answer, cites):
+    print(f"\n  {answer}" + (f"  [{', '.join(cites)}]" if cites else ""))
+    for e in g["evidence"]:
+        if e["id"] in cites:
+            print(f"    {e['id']}: {e['text'].splitlines()[0][:150]}")
+
+
+# ---------- self-test ----------
+
+def selftest():
+    global GRAVES
+    with tempfile.TemporaryDirectory() as tmp:
+        GRAVES, repo = Path(tmp) / "graves", Path(tmp) / "haunted"
+        repo.mkdir()
+        env = {**os.environ, "GIT_AUTHOR_NAME": "Ada", "GIT_AUTHOR_EMAIL": "ada@example.com",
+               "GIT_COMMITTER_NAME": "Ada", "GIT_COMMITTER_EMAIL": "ada@example.com"}
+
+        def commit(day, msg, files):
+            for f, text in files.items():
+                p = repo / f
+                if text is None:
+                    p.unlink()
+                else:
+                    p.parent.mkdir(parents=True, exist_ok=True)
+                    p.write_bytes(text) if isinstance(text, bytes) else p.write_text(text)
+            date = f"2026-10-{day:02d}T12:00:00"
+            subprocess.run(["git", "-C", repo, "add", "-A"], check=True)
+            subprocess.run(["git", "-C", repo, "commit", "-q", "-m", msg], check=True,
+                           env={**env, "GIT_AUTHOR_DATE": date, "GIT_COMMITTER_DATE": date})
+
+        subprocess.run(["git", "-C", repo, "init", "-q"], check=True)
+        commit(1, "Add the ghost", {"ghost.py": "def boo():\n    return 'boo'\n", "keep.py": "x = 1\n",
+               "logo.png": b"\x89PNG\0\0binary", "old.py": "y = 2\n", "gen/a.md": "generated\n",
+               "tricks.py": "def stay():\n    return 1\n\n\ndef rename_me():\n    return 2\n"})
+        commit(2, "Make the ghost louder", {"ghost.py": "def boo():\n    return 'BOO'\n"})
+        commit(3, "Rename old.py; teach a trick", {"old.py": None, "new.py": "y = 2\n",
+               "tricks.py": "def stay():\n    return 1\n\n\ndef renamed():\n    return 2\n\n\n"
+                            "def float_away():\n    return 'whoosh'\n"})
+        commit(4, "Remove ghost.py: spirit.py does it better\n\nThe ghost scared nobody.",
+               {"ghost.py": None, "spirit.py": "def boo():\n    return 'BOO!'\n", "logo.png": None, "gen/a.md": None})
+        commit(5, "Call the spirit; nobody floats", {"keep.py": "from spirit import boo  # was ghost\n",
+               "tricks.py": "def stay():\n    return 1\n\n\ndef renamed():\n    return 2\n"})
+
+        found = find_code(repo, skip=["gen/*"])
+        # renamed, binary and skipped files are not dead; nor is a function renamed in place (rename_me)
+        assert [g["path"] for g in found] == ["ghost.py", "tricks.py#float_away"], [g["path"] for g in found]
+        g, trick = found
+        save(g)
+        f = g["facts"]
+        assert (f["born"], f["died"], f["makers"], f["lifespan"]) == \
+            ("2026-10-01 12:00", "2026-10-04 12:00", ["Ada"], "3 day(s)"), f
+        t = trick["facts"]
+        assert (t["born"], t["died"], t["lifespan"]) == ("2026-10-03 12:00", "2026-10-05 12:00", "2 day(s)"), t
+        trick_text = "\n".join(e["text"] for e in trick["evidence"])
+        for must in ("added float_away", "removed float_away from tricks.py", "return 'whoosh'", "nobody floats"):
+            assert must in trick_text, must
+        texts = "\n".join(e["text"] for e in g["evidence"])
+        for must in ("created this file", "deleted this file", "The ghost scared nobody", "added: spirit.py",
+                     "return 'BOO'", 'still appears 1 time(s)', "keep.py:1:"):
+            assert must in texts, must
+        assert load("ghost")["path"] == "ghost.py"
+
+        # the guard: invented ids are dropped, and no real citation means silence
+        assert guard(g, {"answer": "I was deleted [E99].", "silent": False, "cites": ["E99"]}) == (SILENT, [])
+        assert guard(g, {"answer": "I was deleted.", "silent": False, "cites": []}) == (SILENT, [])
+        assert guard(g, {"answer": "Who knows.", "silent": True, "cites": ["E1"]}) == (SILENT, [])
+        assert guard(g, {"answer": "I died on 4 Oct [E3].", "silent": False, "cites": ["E3", "E99", "E3"]}) \
+            == ("I died on 4 Oct.", ["E3"])
+        print("offline checks passed")
+
+        if not gemma_up():
+            print(f"live checks skipped: Ollama is not serving {MODEL}")
+            return
+        t = tombstone(g)
+        assert t["epitaph"] and t["cause_of_death"] and set(t["cites"]) <= {e["id"] for e in g["evidence"]}, t
+        print(f"tombstone: {t['cause_of_death']} / \"{t['epitaph']}\" {t['cites']}")
+        answer, cites = summon(g, "On what date were you deleted, and in which commit?")
+        print("deleted when:", answer, cites)
+        assert f["died_cite"] in cites and answer != SILENT, (answer, cites)
+        answer, cites = summon(g, "What was your favourite colour?")
+        print("favourite colour:", answer, cites)
+        assert answer == SILENT and cites == [], (answer, cites)
+        print("live checks passed")
+
+
+# ---------- command line ----------
+
+def main():
+    ap = argparse.ArgumentParser(description="Séance: talk to dead code with a local Gemma 4.")
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    fp = sub.add_parser("find", help="find the dead and save their evidence")
+    fp.add_argument("graveyard", choices=["code"])
+    fp.add_argument("target", help="path to a git repository")
+    fp.add_argument("--skip", action="append", default=[], metavar="GLOB", help="ignore deleted paths like this")
+    sub.add_parser("list", help="every grave found so far")
+    tp = sub.add_parser("tombstone", help="Gemma writes the tombstone")
+    tp.add_argument("name")
+    sp = sub.add_parser("summon", help="ask the dead a question")
+    sp.add_argument("name")
+    sp.add_argument("question", nargs="?")
+    sub.add_parser("selftest", help="check the finder and the citation guard")
+    a = ap.parse_args()
+
+    if a.cmd == "selftest":
+        return selftest()
+    if a.cmd == "find":
+        graves = find_code(a.target, a.skip)
+        for g in graves:
+            save(g)
+        print(f"{len(graves)} grave(s) dug in {Path(a.target).name}:\n")
+        print("\n\n".join(describe(g) for g in graves) or "  none (or all skipped)")
+        return
+    if a.cmd == "list":
+        print("\n\n".join(describe(json.loads(f.read_text())) for f in all_graves()) or "No graves yet. Run find.")
+        return
+    g = load(a.name)
+    if a.cmd == "tombstone":
+        t = tombstone(g)
+        print(describe(g))
+        print(f"\n  Cause of death: {t['cause_of_death']}  [{', '.join(t['cites'])}]")
+        print(f"  \"{t['epitaph']}\"")
+        return
+    if a.question:
+        return show_answer(g, *summon(g, a.question))
+    print(f"The medium reaches for {g['name']}. Ask it something (empty line to leave).")
+    history = []
+    while (q := input("\n> ").strip()):
+        answer, cites = summon(g, q, history[-6:])
+        show_answer(g, answer, cites)
+        history += [{"role": "user", "content": q}, {"role": "assistant", "content": answer}]
+
+
+if __name__ == "__main__":
+    main()
