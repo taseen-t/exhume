@@ -12,7 +12,7 @@ Every graveyard works the same way:
 
 ## Run it
 
-You need Python 3.9 or newer, git, curl, and [Ollama](https://ollama.com) with Gemma 4:
+You need Python 3 (tested with 3.13), git, curl, and [Ollama](https://ollama.com) with Gemma 4:
 
 ```bash
 ollama pull gemma4:e4b
@@ -34,7 +34,7 @@ Websites and apps:
 ```bash
 python3 seance.py find site orkut.com \
   --page 20140630142637/http://en.blog.orkut.com/2014/06/tchau-orkut.html
-python3 seance.py find apps --days 90               # macOS only
+python3 seance.py find apps --days 90               # macOS only; add --unrecorded for apps with no last-opened date
 ```
 
 `find` saves each grave as JSON in `graves/`. Website pages are cached there too, so tombstones and summons work offline once `find` has run.
@@ -44,12 +44,13 @@ python3 seance.py find apps --days 90               # macOS only
 Run on [TapOff](https://github.com/taseen-t/tapoff), a small Android app. The camera-tap feature was added and removed on the same afternoon:
 
 ```text
-$ python3 seance.py tombstone cameraTap
+$ python3 seance.py find code ~/Desktop/tapoff --skip 'docs/Code graph/*'
+...
 NotchPanel.java: cameraTap, setCameraTap, mark, rotated, addSpot
   tapoff/src/com/taseen/tapoff/NotchPanel.java: born 2026-09-30 15:07 in a720728, died 2026-09-30 15:25 in c491e5b, lived 17 minutes, made by Starboy756
 
 $ python3 seance.py summon cameraTap "Why only in landscape?"
-  The code that was removed contained a comment stating that the camera tap was for landscape only because in portrait the status bar sits over the camera and takes every tap there.  [E5]
+  The code that was removed included a comment stating that the camera tap was for landscape only because in portrait the status bar sits over the camera and takes every tap there.  [E5]
     E5: // Tapping the camera, in landscape only: in portrait the status bar sits over the camera and takes every tap there.
 
 $ python3 seance.py summon EdgeVolume "How many people downloaded you?"
@@ -70,7 +71,7 @@ The indented line under each answer is the sentence from the cited evidence that
 
 - **Code:** files that were deleted and never came back, and functions or classes removed from files that still exist. Renames don't count, binary files are skipped, and `--skip GLOB` ignores generated folders. A definition line that comes back with only its name changed is a rename, not a death. Functions are found by matching definition lines in common languages; it isn't a full parser.
 - **Websites:** the home page through the years, from the Wayback Machine's index, plus any snapshot you name with `--page TIMESTAMP/URL` (the page that announced the shutdown, say). The live site is checked as well.
-- **Apps:** apps in `/Applications` that macOS last saw opened more than `--days` days ago, or has no record of opening at all. Apps only, never documents.
+- **Apps:** apps in `/Applications` that macOS last saw opened more than `--days` days ago. Apps macOS has no record of opening (menu-bar apps and ones started from the command line often have none) are listed only with `--unrecorded`. Apps only, never documents.
 
 ## How it stays honest
 
@@ -79,6 +80,12 @@ The indented line under each answer is the sentence from the cited evidence that
 - An answer with no real citation, a number that isn't in the evidence it cites, or one where Gemma says the evidence is silent, becomes "The spirits are silent."
 - Under every answer, Séance prints the sentence from each cited piece of evidence that best matches it, so you can check the answer yourself.
 - `selftest` builds a small haunted git repo (a dead file, a dead function, a rename, a binary, a skipped folder) and checks what the finder digs up, the citation guard, the web-page text filter and the macOS metadata reader. With Ollama running, it also checks that a question about the death date cites the commit that did the deleting, and that a question about the ghost's favourite colour gets silence.
+
+## Limits
+
+- Gemma 4 E4B is small. It sometimes reads a commit title as the reason something died, or answers in the third person. The citations and the receipts let you see when that happens.
+- The function finder matches definition lines; it misses things like Java constructors.
+- On a 16 GB Mac that is short on memory, one Gemma call can take minutes instead of seconds.
 
 ## Why open
 

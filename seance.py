@@ -32,6 +32,8 @@ BOILERPLATE = re.compile(r"\s*(import\s|package\s|from\s+\S+\s+import\s|#include
 # ---------- Gemma ----------
 
 def ask(messages, schema):
+    if sum(len(m["content"]) for m in messages) / 3 > NUM_CTX - 400 - 64:  # ~3+ characters a token, erring long
+        sys.exit("The evidence is too long for Gemma's context window.")
     for seed in (7, 8):  # a reply that loops until the 400-token cap is cut off; one retry with a new seed
         body = {"model": MODEL, "messages": messages, "stream": False, "think": False,
                 "format": schema, "keep_alive": "30m",
@@ -40,7 +42,7 @@ def ask(messages, schema):
                                      {"Content-Type": "application/json"})
         with urllib.request.urlopen(req, timeout=1800) as r:  # a cold load, or a Mac short on memory, takes minutes
             reply = json.load(r)
-        if reply.get("prompt_eval_count", 0) >= NUM_CTX - 64:
+        if reply.get("prompt_eval_count", 0) >= NUM_CTX - 400 - 64:  # leave room for the reply
             sys.exit("The evidence is too long for Gemma's context window.")
         try:
             return json.loads(reply["message"]["content"])
@@ -425,15 +427,16 @@ def md_date(v):
     return datetime.strptime(v, "%Y-%m-%d %H:%M:%S %z") if v else None
 
 
-def find_apps(days=365, folder="/Applications"):
-    """Apps in FOLDER that macOS says haven't been opened in DAYS days. Apps only, never files."""
+def find_apps(days=365, folder="/Applications", unrecorded=False):
+    """Apps in FOLDER that macOS last saw opened more than DAYS days ago (with UNRECORDED, also apps
+    it has no record of opening: menu-bar and command-line-launched apps often have none). Apps only."""
     now = datetime.now().astimezone()  # local time, so "today" is the user's today
     graves = []
     for app in sorted(Path(folder).glob("*.app")):
         md = mdls(app)
         used, added = md_date(md["kMDItemLastUsedDate"]), md_date(md["kMDItemDateAdded"])
-        if used and (now - used).days < days:
-            continue  # still alive
+        if (used and (now - used).days < days) or (not used and not unrecorded):
+            continue  # still alive, or no record to judge by
         try:
             info = plistlib.loads((app / "Contents" / "Info.plist").read_bytes())
         except (OSError, plistlib.InvalidFileException):
@@ -668,6 +671,7 @@ def main():
     fp.add_argument("--page", action="append", default=[], metavar="TIMESTAMP/URL",
                     help="site: also read this Wayback snapshot, e.g. 20140630142637/http://example.com/bye.html")
     fp.add_argument("--days", type=int, default=365, help="apps: unused for at least this many days")
+    fp.add_argument("--unrecorded", action="store_true", help="apps: also list apps macOS has no record of opening")
     sub.add_parser("list", help="every grave found so far")
     tp = sub.add_parser("tombstone", help="Gemma writes the tombstone")
     tp.add_argument("name")
@@ -682,9 +686,14 @@ def main():
     if a.cmd == "find":
         if a.graveyard != "apps" and not a.target:
             sys.exit(f"find {a.graveyard} needs a target.")
+        kind, where = {"code": ("code", lambda: Path(a.target).expanduser().resolve().name),
+                       "site": ("site", lambda: re.sub(r"^https?://", "", a.target).strip("/")),
+                       "apps": ("app", lambda: "applications")}[a.graveyard]
+        for old in (GRAVES / kind / where()).glob("*.json"):
+            old.unlink()  # a fresh dig replaces the last one; stale graves and tombstones go
         graves = (find_code(a.target, a.skip) if a.graveyard == "code" else
                   [find_site(a.target, a.page)] if a.graveyard == "site" else
-                  find_apps(a.days, a.target or "/Applications"))
+                  find_apps(a.days, a.target or "/Applications", a.unrecorded))
         for g in graves:
             save(g)
         print(f"{plural(len(graves), 'grave')} dug:\n")
