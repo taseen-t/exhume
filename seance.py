@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Séance: a local Gemma 4 medium for things that died.
+"""Séance AI: a local Gemma 4 medium for things that died.
 
   python3 seance.py find code REPO [--skip GLOB ...]   deleted files and functions in a git repo
   python3 seance.py find site DOMAIN [--page TS/URL]   a dead website, from the Wayback Machine
@@ -661,7 +661,7 @@ def selftest():
 # ---------- command line ----------
 
 def main():
-    ap = argparse.ArgumentParser(description="Séance: talk to dead code with a local Gemma 4.")
+    ap = argparse.ArgumentParser(description="Séance AI: talk to dead code with a local Gemma 4.")
     sub = ap.add_subparsers(dest="cmd", required=True)
     fp = sub.add_parser("find", help="find the dead and save their evidence")
     fp.add_argument("graveyard", choices=["code", "site", "apps"])

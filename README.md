@@ -1,8 +1,8 @@
-# Séance
+# Séance AI
 
 Talk to the dead, on your own laptop.
 
-Séance is a medium that runs Gemma 4 locally through Ollama. It lets you question three kinds of dead things: code deleted from a git repository, websites that now live only in the Wayback Machine, and Mac apps you stopped opening.
+Séance AI is a medium that runs Gemma 4 locally through Ollama. It lets you question three kinds of dead things: code deleted from a git repository, websites that now live only in the Wayback Machine, and Mac apps you stopped opening.
 
 Every graveyard works the same way:
 
@@ -78,7 +78,7 @@ The indented line under each answer is the sentence from the cited evidence that
 - Gemma never supplies a date, a commit or a name. Code reads those from git, the Wayback Machine or macOS.
 - Gemma answers in JSON. Its `cites` list may only hold evidence IDs that exist (an enum in the schema), and code drops anything else anyway.
 - An answer with no real citation, a number that isn't in the evidence it cites, or one where Gemma says the evidence is silent, becomes "The spirits are silent."
-- Under every answer, Séance prints the sentence from each cited piece of evidence that best matches it, so you can check the answer yourself.
+- Under every answer, Séance AI prints the sentence from each cited piece of evidence that best matches it, so you can check the answer yourself.
 - `selftest` builds a small haunted git repo (a dead file, a dead function, a rename, a binary, a skipped folder) and checks what the finder digs up, the citation guard, the web-page text filter and the macOS metadata reader. With Ollama running, it also checks that a question about the death date cites the commit that did the deleting, and that a question about the ghost's favourite colour gets silence.
 
 ## Limits
@@ -91,7 +91,7 @@ The indented line under each answer is the sentence from the cited evidence that
 
 - **Private.** After `find`, nothing leaves your laptop: not your code, not your questions. Private repositories stay private.
 - **Free.** No API key, no account, no meter running.
-- **Yours to change.** Gemma 4 is open weights under Apache 2.0, Ollama is MIT, and Séance is MIT. You can read and change every part of the medium.
+- **Yours to change.** Gemma 4 is open weights under Apache 2.0, Ollama is MIT, and Séance AI is MIT. You can read and change every part of the medium.
 
 ## Built with
 
