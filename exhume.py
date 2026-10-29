@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""Séance AI: a local Gemma 4 medium for things that died.
+"""Exhume: a local Gemma 4 medium for things that died.
 
-  python3 seance.py find code REPO [--skip GLOB ...]   deleted files and functions in a git repo
-  python3 seance.py find site DOMAIN [--page TS/URL]   a dead website, from the Wayback Machine
-  python3 seance.py find apps [--days N]               Mac apps not opened in N days
-  python3 seance.py list                               every grave found so far
-  python3 seance.py tombstone NAME                     Gemma writes the tombstone
-  python3 seance.py summon NAME ["question"]           ask the dead (a chat if no question)
-  python3 seance.py selftest
+  python3 exhume.py find code REPO [--skip GLOB ...]   deleted files and functions in a git repo
+  python3 exhume.py find site DOMAIN [--page TS/URL]   a dead website, from the Wayback Machine
+  python3 exhume.py find apps [--days N]               Mac apps not opened in N days
+  python3 exhume.py list                               every grave found so far
+  python3 exhume.py tombstone NAME                     Gemma writes the tombstone
+  python3 exhume.py summon NAME ["question"]           ask the dead (a chat if no question)
+  python3 exhume.py selftest
 
 Code gathers the facts (dates, commits, authors, snapshots) and numbers each piece of evidence.
 Gemma only writes the words, and may only cite evidence that exists. When the
@@ -20,7 +20,7 @@ from datetime import date, datetime
 from html.parser import HTMLParser
 from pathlib import Path
 
-MODEL = os.environ.get("SEANCE_MODEL", "gemma4:e4b")
+MODEL = os.environ.get("EXHUME_MODEL", "gemma4:e4b")
 OLLAMA = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
 NUM_CTX = 4096  # what Ollama's MLX runner loads gemma4:e4b with; fixed, because changing it reloads the model
 GRAVES = Path(__file__).resolve().parent / "graves"
@@ -661,7 +661,7 @@ def selftest():
 # ---------- command line ----------
 
 def main():
-    ap = argparse.ArgumentParser(description="Séance AI: talk to dead code with a local Gemma 4.")
+    ap = argparse.ArgumentParser(description="Exhume: talk to dead code with a local Gemma 4.")
     sub = ap.add_subparsers(dest="cmd", required=True)
     fp = sub.add_parser("find", help="find the dead and save their evidence")
     fp.add_argument("graveyard", choices=["code", "site", "apps"])

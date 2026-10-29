@@ -1,8 +1,8 @@
-# Séance AI
+# Exhume
 
 Talk to the dead, on your own laptop.
 
-Séance AI is a medium that runs Gemma 4 locally through Ollama. It lets you question three kinds of dead things: code deleted from a git repository, websites that now live only in the Wayback Machine, and Mac apps you stopped opening.
+Exhume is a medium that runs Gemma 4 locally through Ollama. It lets you question three kinds of dead things: code deleted from a git repository, websites that now live only in the Wayback Machine, and Mac apps you stopped opening.
 
 Every graveyard works the same way:
 
@@ -21,20 +21,20 @@ ollama pull gemma4:e4b
 Then:
 
 ```bash
-python3 seance.py find code ~/code/some-repo        # dig up deleted files and functions
-python3 seance.py list                              # every grave found so far
-python3 seance.py tombstone cameraTap               # Gemma writes the tombstone
-python3 seance.py summon cameraTap "Why were you removed?"
-python3 seance.py summon cameraTap                  # a chat; an empty line ends it
-python3 seance.py selftest
+python3 exhume.py find code ~/code/some-repo        # dig up deleted files and functions
+python3 exhume.py list                              # every grave found so far
+python3 exhume.py tombstone cameraTap               # Gemma writes the tombstone
+python3 exhume.py summon cameraTap "Why were you removed?"
+python3 exhume.py summon cameraTap                  # a chat; an empty line ends it
+python3 exhume.py selftest
 ```
 
 Websites and apps:
 
 ```bash
-python3 seance.py find site orkut.com \
+python3 exhume.py find site orkut.com \
   --page 20140630142637/http://en.blog.orkut.com/2014/06/tchau-orkut.html
-python3 seance.py find apps --days 90               # macOS only; add --unrecorded for apps with no last-opened date
+python3 exhume.py find apps --days 90               # macOS only; add --unrecorded for apps with no last-opened date
 ```
 
 `find` saves each grave as JSON in `graves/`. Website pages are cached there too, so tombstones and summons work offline once `find` has run.
@@ -44,23 +44,23 @@ python3 seance.py find apps --days 90               # macOS only; add --unrecord
 Run on [TapOff](https://github.com/taseen-t/tapoff), a small Android app. The camera-tap feature was added and removed on the same afternoon:
 
 ```text
-$ python3 seance.py find code ~/Desktop/tapoff --skip 'docs/Code graph/*'
+$ python3 exhume.py find code ~/Desktop/tapoff --skip 'docs/Code graph/*'
 ...
 NotchPanel.java: cameraTap, setCameraTap, mark, rotated, addSpot
   tapoff/src/com/taseen/tapoff/NotchPanel.java: born 2026-09-30 15:07 in a720728, died 2026-09-30 15:25 in c491e5b, lived 17 minutes, made by Starboy756
 
-$ python3 seance.py summon cameraTap "Why only in landscape?"
+$ python3 exhume.py summon cameraTap "Why only in landscape?"
   The code that was removed included a comment stating that the camera tap was for landscape only because in portrait the status bar sits over the camera and takes every tap there.  [E5]
     E5: // Tapping the camera, in landscape only: in portrait the status bar sits over the camera and takes every tap there.
 
-$ python3 seance.py summon EdgeVolume "How many people downloaded you?"
+$ python3 exhume.py summon EdgeVolume "How many people downloaded you?"
   The spirits are silent.
 ```
 
 And Orkut, Google's first social network:
 
 ```text
-$ python3 seance.py summon orkut "When did you die?"
+$ python3 exhume.py summon orkut "When did you die?"
   I was bid farewell in June 2014, and the service was set to shut down on September 30, 2014.  [E4]
     E4: We will shut down Orkut on September 30, 2014.
 ```
@@ -78,7 +78,7 @@ The indented line under each answer is the sentence from the cited evidence that
 - Gemma never supplies a date, a commit or a name. Code reads those from git, the Wayback Machine or macOS.
 - Gemma answers in JSON. Its `cites` list may only hold evidence IDs that exist (an enum in the schema), and code drops anything else anyway.
 - An answer with no real citation, a number that isn't in the evidence it cites, or one where Gemma says the evidence is silent, becomes "The spirits are silent."
-- Under every answer, Séance AI prints the sentence from each cited piece of evidence that best matches it, so you can check the answer yourself.
+- Under every answer, Exhume prints the sentence from each cited piece of evidence that best matches it, so you can check the answer yourself.
 - `selftest` builds a small haunted git repo (a dead file, a dead function, a rename, a binary, a skipped folder) and checks what the finder digs up, the citation guard, the web-page text filter and the macOS metadata reader. With Ollama running, it also checks that a question about the death date cites the commit that did the deleting, and that a question about the ghost's favourite colour gets silence.
 
 ## Limits
@@ -91,7 +91,7 @@ The indented line under each answer is the sentence from the cited evidence that
 
 - **Private.** After `find`, nothing leaves your laptop: not your code, not your questions. Private repositories stay private.
 - **Free.** No API key, no account, no meter running.
-- **Yours to change.** Gemma 4 is open weights under Apache 2.0, Ollama is MIT, and Séance AI is MIT. You can read and change every part of the medium.
+- **Yours to change.** Gemma 4 is open weights under Apache 2.0, Ollama is MIT, and Exhume is MIT. You can read and change every part of the medium.
 
 ## Built with
 
