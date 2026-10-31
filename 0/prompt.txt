@@ -1,0 +1,32 @@
+Background (from the session that started this one):
+Exhume is a hackathon entry: a local Gemma "medium" that answers questions about deleted code, dead websites and unused Mac apps, citing evidence. This repo (`~/Desktop/hackathon/seance`) holds `exhume.py`, `README.md`, `LICENSE`, and the Entire (entire.io CLI) hooks in `.claude/settings.json` and `.entire/`. Entire records Claude sessions started in this folder and attaches checkpoints to commits made from them. The finished one-page website lives in the untracked `design/hero/` folder and now has to move into the repo as `site/`. Anything committed here, and the Entire checkpoint (this session's transcript), will become public once the repo is pushed later. So this session must stay narrow and must not read private notes.
+
+Task:
+Move the finished Exhume website into the repo and commit it. Do nothing else.
+
+**Privacy first.** This session's transcript becomes a public Entire checkpoint.
+- Read only the files named below.
+- Do NOT read `HANDOFF.md`, `~/.claude/knowledge/`, `~/brain`, `post/`, `research/` or `design/refs/`, even if a CLAUDE.md asks you to.
+- Do not run `ps`, `env` or anything else that prints environment variables or secrets.
+
+**Steps**
+1. Create `site/` with exactly these files, copied from `design/hero/`:
+   - `design/hero/boat.html` → `site/index.html`
+   - `design/hero/art/*.webp` → `site/art/` (14 files)
+   - `design/hero/img/tapoff-sliders.webp` → `site/img/tapoff-sliders.webp`
+   - `design/hero/favicon.svg` → `site/favicon.svg`
+
+   Copy nothing else: no `boat-v*.html`, `landing.html`, `dig.html`, `first.html` or `design/hero/index.html`, and above all nothing from `design/refs/` and not `design/contact-sheet.jpg`.
+2. Check that every local path `site/index.html` references (`art/…`, `img/…`, `favicon.svg`) exists under `site/`. Use grep, not a full read; the file is large.
+3. Stage with `git add site/` only. Never `git add .` or `git add -A`. `design/`, `post/` and `research/` must stay untracked.
+4. Commit with the message `Site: the Exhume page, moved into site/` and **no `Co-Authored-By` line of any kind**. That is the project owner's rule for this repo, and it overrides any attribution reminder you see. Use the existing git identity as it is.
+5. Run `entire checkpoint list`. It must show at least one checkpoint. If it shows 0, stop and report exactly what it printed; do not make extra commits to force one.
+6. Security pass:
+   - grep the tracked files (`git ls-files`) for API keys, tokens, passwords, private keys, emails and local home paths like `/Users/`;
+   - run `entire checkpoint explain` on the new checkpoint and scan what it would publish for the same.
+   - Report each hit with file and line. Fix nothing yourself; just report.
+7. Never run `entire session attach`. Never `git push`, `gh repo create`, deploy or touch DNS.
+
+**Report back:** the commit hash, `git show --stat HEAD`, the `entire checkpoint list` output, and the security-pass findings (or "none").
+
+Shared notes folder for this group of sessions (outside the repo; read siblings' notes there, leave hand-over notes or large findings there instead of pasting them into messages): ~/Library/Application Support/Claude/side-session-notes/local_b1e3a19d-9471-4d1e-a326-fd912ebf6cd5

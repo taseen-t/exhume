@@ -1,0 +1,53 @@
+{
+  "cli_version": "0.12.2",
+  "checkpoint_id": "01M68DJQZ15JTSD4DEV3RTZ8D7",
+  "session_id": "fee5cf52-9376-4e04-aeb3-5800b17303ac",
+  "strategy": "manual-commit",
+  "created_at": "2026-10-31T07:25:30.119742Z",
+  "branch": "main",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "site/art/1916.1036.webp",
+    "site/art/1922.638.webp",
+    "site/art/1929.161.webp",
+    "site/art/1929.163.webp",
+    "site/art/1929.169.webp",
+    "site/art/1933.126.webp",
+    "site/art/1942.145.webp",
+    "site/art/1954.896.webp",
+    "site/art/1974.253.webp",
+    "site/art/1980.188.1.webp",
+    "site/art/1993.8.webp",
+    "site/art/2000.97.webp",
+    "site/art/2010.650.webp",
+    "site/art/2022.249.webp",
+    "site/favicon.svg",
+    "site/img/tapoff-sliders.webp",
+    "site/index.html"
+  ],
+  "agent": "Claude Code",
+  "model": "claude-opus-5-5",
+  "turn_id": "f0d32cdc506d",
+  "compact_transcript_start": 0,
+  "token_usage": {
+    "input_tokens": 12,
+    "cache_creation_tokens": 109136,
+    "cache_read_tokens": 531093,
+    "output_tokens": 2286,
+    "api_call_count": 6
+  },
+  "redaction": {
+    "replacements": 438,
+    "layers": {
+      "betterleaks": 0,
+      "connection_string": 0,
+      "credential_key": 0,
+      "credential_value": 0,
+      "credentialed_uri": 0,
+      "entropy": 522,
+      "key_context": 0,
+      "provider_token": 0,
+      "shell_stdin": 0
+    }
+  }
+}
