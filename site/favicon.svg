@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- Exhume: an ink tombstone on black, with a marigold-orange line of earth -->
+  <rect width="64" height="64" rx="14" fill="#0b0b0b"/>
+  <path d="M19 52V27c0-8 5.8-14 13-14s13 6 13 14v25z" fill="#f3f1ec"/>
+  <path d="M27.5 28h9M32 23.5v13" stroke="#0b0b0b" stroke-width="3.2" stroke-linecap="round"/>
+  <path d="M10 52.5c8-1.6 15 1 22-.4s14-1.4 22 .4" stroke="#f39200" stroke-width="4" stroke-linecap="round" fill="none"/>
+</svg>
