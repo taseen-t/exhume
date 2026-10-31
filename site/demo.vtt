@@ -1,0 +1,37 @@
+WEBVTT
+
+00:00:00.120 --> 00:00:05.300
+This feature lived 17 minutes. So we asked it why it died.
+
+00:00:05.700 --> 00:00:10.600
+This is Exhume: a medium that runs Gemma 4 on your own laptop.
+
+00:00:11.380 --> 00:00:15.520
+First, plain code digs through git for everything that was deleted.
+
+00:00:16.948 --> 00:00:21.728
+Then we ask the dead. Gemma answers only from the evidence…
+
+00:00:21.748 --> 00:00:25.688
+…and cites it. E5 is the dead code's own comment.
+
+00:00:26.918 --> 00:00:32.098
+Dead websites come back from the Wayback Machine. Orkut quotes its own goodbye.
+
+00:00:33.128 --> 00:00:37.588
+For forgotten Mac apps, the date comes from macOS, not from the model.
+
+00:00:39.107 --> 00:00:41.487
+And when the evidence doesn't say…
+
+00:00:43.273 --> 00:00:44.973
+the spirits are silent.
+
+00:00:46.263 --> 00:00:48.803
+The whole story is at exhume.tech.
+
+00:00:54.385 --> 00:00:57.405
+Exhume. Open source, and free.
+
+00:00:55.735 --> 00:00:58.235
+exhume.tech · github.com/taseen-t/exhume

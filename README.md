@@ -4,6 +4,8 @@ Talk to the dead, on your own laptop.
 
 Exhume is a medium that runs Gemma 4 locally through Ollama. It lets you question three kinds of dead things: code deleted from a git repository, websites that now live only in the Wayback Machine, and Mac apps you stopped opening.
 
+[![Exhume in 58 seconds: real runs on dead code, a dead website and a forgotten app](demo.gif)](https://exhume.tech/demo.mp4)
+
 **Live:** [exhume.tech](https://exhume.tech) · **Code:** this repo · **Agent session:** [Entire checkpoint](#how-it-was-built)
 
 Every graveyard works the same way:

@@ -238,6 +238,9 @@
   .plate .pic { aspect-ratio: 21 / 9; }
   .plate figcaption { margin-top: 10px; font: 12.5px/1.5 "IBM Plex Mono", monospace; opacity: .6; }
 
+  .demo { width: min(960px, 92vw); margin: 0 auto 6vh; color: var(--ink); position: relative; z-index: 1; }
+  .demo video { display: block; width: 100%; aspect-ratio: 16 / 9; background: var(--night); }
+
   /* ---------- the end ---------- */
   .install { width: min(860px, 92vw); margin: 0 auto; padding: clamp(24px, 3vw, 38px); background: #fff; color: var(--ink); position: relative; z-index: 1; }
   .install ol { margin: 0; padding-left: 1.5em; display: grid; gap: 16px; }
@@ -950,6 +953,13 @@ private void addSpot() {
   </section>
 
   <section data-ground="white">
+    <div class="beat short"><p class="line reveal">Watch it dig, in under a minute:</p></div>
+    <figure class="demo frame reveal">
+      <video controls playsinline preload="none" poster="demo-poster.jpg" aria-label="Exhume demo video, 58 seconds">
+        <source src="demo.mp4" type="video/mp4">
+        <track kind="captions" src="demo.vtt" srclang="en" label="English" default>
+      </video>
+    </figure>
     <div class="beat short"><p class="line reveal">How it works, in four steps:</p></div>
     <div class="how">
       <div class="step reveal"><div class="frame"><span class="n">1</span><h4>Dig</h4><p>Plain code finds the dead: removed code in git history, old pages on the Wayback Machine, apps your Mac stopped seeing you open.</p><code>exhume.py find code|site|apps</code></div></div>
