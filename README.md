@@ -4,11 +4,73 @@ Talk to the dead, on your own laptop.
 
 Exhume is a medium that runs Gemma 4 locally through Ollama. It lets you question three kinds of dead things: code deleted from a git repository, websites that now live only in the Wayback Machine, and Mac apps you stopped opening.
 
+**Live:** [exhume.tech](https://exhume.tech) · **Code:** this repo · **Agent session:** [Entire checkpoint](#how-it-was-built)
+
 Every graveyard works the same way:
 
 1. **Find the dead.** Code collects the evidence, numbers each piece (E1, E2, …) and works out the facts itself: dates, commits, authors, how long it lived.
 2. **Tombstone.** Gemma writes the cause of death and an epitaph, from the evidence only.
 3. **Summon.** Ask it anything. Every answer cites the evidence it rests on. When the evidence doesn't say, the answer is "The spirits are silent."
+
+> **Verify in 30 seconds**
+> | | |
+> |---|---|
+> | **Model** | **Gemma 4 E4B** (`gemma4:e4b`), run locally with Ollama. Licence: [Apache 2.0](https://ai.google.dev/gemma/apache_2). [`exhume.py` line 23](exhume.py#L23) |
+> | **Where Gemma is called** | `ask()` in [`exhume.py` line 34](exhume.py#L34): one call to Ollama's `/api/chat`, JSON out, temperature 0.2, fixed seed. Used by `tombstone()` ([line 510](exhume.py#L510)) and `summon()` ([line 536](exhume.py#L536)) |
+> | **Harness** | Plain code after every answer: `guard()` ([line 81](exhume.py#L81)) drops citations that don't exist, `numbers_ok()` ([line 74](exhume.py#L74)) rejects any number the cited evidence doesn't contain, and anything unsupported becomes "The spirits are silent." `receipt()` ([line 549](exhume.py#L549)) prints the backing sentence |
+> | **Context** | 4,096 tokens, 400-token reply cap, and the real prompt size is checked before a reply is trusted ([line 25](exhume.py#L25)) |
+> | **Self-check** | `python3 exhume.py selftest` ([line 565](exhume.py#L565)): a haunted test repo, the citation guard, the web-page filter, the macOS reader, and two live Gemma questions |
+> | **Dependencies** | None to install: the Python standard library, git, curl and Ollama |
+> | **Licence** | MIT ([LICENSE](LICENSE)) |
+
+## How it works
+
+```mermaid
+flowchart TD
+  you(["You: python3 exhume.py find …"]) --> kind{"Which graveyard?"}
+  kind -->|"code"| git["git log and git show:<br/>deleted files and functions,<br/>born, died, made by"]
+  kind -->|"site"| wb["Wayback Machine index<br/>and saved pages,<br/>plus the live site today"]
+  kind -->|"apps"| mac["macOS metadata:<br/>last opened, times opened,<br/>size, where it came from"]
+  git --> ev["Code numbers the evidence<br/>E1, E2, … and works out<br/>every date and fact itself"]
+  wb --> ev
+  mac --> ev
+  ev --> grave[("graves/NAME.json<br/>on your disk")]
+  grave --> ask{"tombstone or summon?"}
+  ask --> gemma["Gemma 4 on your laptop<br/>answers in JSON,<br/>citing evidence IDs only"]
+  gemma --> guard{"Code checks:<br/>do the cited IDs exist?<br/>are its numbers in them?"}
+  guard -->|"yes"| answer["The answer, with the<br/>sentence that backs it"]
+  guard -->|"no"| silent["The spirits are silent."]
+
+  classDef code fill:#f3f1ec,stroke:#0b0b0b,color:#0b0b0b
+  classDef model fill:#f39200,stroke:#0b0b0b,color:#0b0b0b
+  classDef stop fill:#0b0b0b,stroke:#0b0b0b,color:#f3f1ec
+  class git,wb,mac,ev,guard,answer code
+  class gemma model
+  class silent stop
+```
+
+## Architecture
+
+```mermaid
+flowchart LR
+  subgraph laptop["Your laptop: nothing leaves it after find"]
+    cli["exhume.py<br/>(standard library only)"]
+    graves[("graves/<br/>evidence JSON and<br/>cached web pages")]
+    ollama["Ollama<br/>localhost:11434"]
+    gemma["Gemma 4 E4B<br/>(open weights)"]
+    repo[("any git repo")]
+    apps[("/Applications<br/>and Spotlight metadata")]
+  end
+  archive["Internet Archive<br/>Wayback Machine"]
+  site["exhume.tech<br/>(static page on Vercel)"]
+
+  cli -->|"git"| repo
+  cli -->|"mdls"| apps
+  cli -->|"curl, once, at find"| archive
+  cli <--> graves
+  cli -->|"/api/chat, JSON schema"| ollama --> gemma
+  site -.->|"explains it, runs nothing"| cli
+```
 
 ## Run it
 
@@ -99,7 +161,22 @@ The indented line under each answer is the sentence from the cited evidence that
 - The Python standard library, git and curl
 - Website history from the Internet Archive's [Wayback Machine](https://web.archive.org)
 
-Made for DEV's Hacktoberfest 2026 Week 4 challenge, "Ghost in the Machine", with help from Claude Code. Entire is enabled in this repository for Claude Code sessions.
+## How it was built
+
+Made for DEV's Hacktoberfest 2026 Week 4 challenge, "Ghost in the Machine", with help from Claude Code. [Entire](https://entire.io) is enabled in this repository and records Claude Code sessions started in it. The session that moved the site into `site/` is checkpoint [`01M68DJQZ15JTSD4DEV3RTZ8D7`](https://github.com/taseen-t/exhume/tree/0fa3d99fe86b728ce0c76c34c5c60daa54f1d792/0), linked to that commit by its `Entire-Checkpoint` trailer. It was redacted before publishing: the app adds private notes, an email and a list of connected services to every session, so only the conversation up to the commit is kept, with the email and home-folder paths replaced.
+
+## Layout
+
+| Path | What it is |
+|---|---|
+| `exhume.py` | The whole medium: finders, Gemma calls, the guard, the CLI and `selftest` |
+| `site/` | The page at [exhume.tech](https://exhume.tech): one HTML file, public-domain art from the Cleveland Museum of Art's open access collection, drawn-in-code effects |
+| `graves/` | Created by `find`; evidence and cached pages (not in git) |
+| `.entire/`, `.claude/` | Entire's session recording for Claude Code |
+
+## Author
+
+Taseen Tariq · [github.com/taseen-t](https://github.com/taseen-t) · MIT licence
 
 ## Licence
 
